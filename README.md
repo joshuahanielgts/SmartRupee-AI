@@ -21,12 +21,6 @@ A modern, production-ready personal finance tracker built with React, TypeScript
 - **Frontend**: React 18, TypeScript, Vite
 - **Styling**: Tailwind CSS, daisyUI
 - **Backend**: Supabase (PostgreSQL, Auth, Storage, Edge Functions)
-- **Charts**: Recharts
-- **Forms**: React Hook Form + Zod validation
-- **Icons**: Lucide React
-- **Date**: date-fns
-- **Export**: CSV export built-in
-- **AI**: Google Gemini API (via Edge Functions)
 
 ## 📦 Installation
 
