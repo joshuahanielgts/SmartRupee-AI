@@ -9,7 +9,6 @@ A modern, production-ready personal finance tracker built with React, TypeScript
 - 📊 **Interactive Dashboard** - Beautiful charts with Recharts (Pie & Line charts)
 - 🎨 **Modern UI** - Built with Tailwind CSS + daisyUI components + shadcn-style
 - ✨ **3D Experience** - Immersive Spline 3D scenes on login and signup pages
-- 🌓 **Dark Mode** - Toggle between light and dark themes
 - 🔒 **Row Level Security** - Supabase RLS ensures data isolation
 - 📱 **Responsive Design** - Works perfectly on mobile and desktop
 - 🧪 **Type-Safe** - Full TypeScript support
