@@ -137,14 +137,7 @@ Smart-Rupee/
 
 ## 🚀 Deployment
 
-### Vercel / Netlify
-
-1. Push code to GitHub
-2. Connect repository to Vercel/Netlify
-3. Add environment variables:
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
-4. Deploy!
+### Netlify - https://smartrupee-ai.netlify.app/
 
 ### Supabase Edge Functions (Optional - for AI features)
 
