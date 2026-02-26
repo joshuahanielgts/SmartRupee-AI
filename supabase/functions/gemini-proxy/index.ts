@@ -306,6 +306,72 @@ Rules:
   }
 }
 
+// ─── Local Fallback Forecast (when Gemini is unavailable) ────────
+function computeLocalForecast(
+  transactions: Array<{ amount: number; category: string; date: string }>,
+  budgets: Array<{ category: string; amount: number; period: string }>
+): BudgetForecastResult {
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const dayOfMonth = now.getDate();
+  const daysRemaining = daysInMonth - dayOfMonth;
+
+  // Group spending by category (only expenses, i.e. negative or treat all as abs)
+  const spendingByCategory: Record<string, number> = {};
+  for (const tx of transactions) {
+    const amt = Math.abs(tx.amount);
+    spendingByCategory[tx.category] = (spendingByCategory[tx.category] || 0) + amt;
+  }
+
+  const forecasts: BudgetForecastItem[] = budgets.map((b) => {
+    const spent = spendingByCategory[b.category] || 0;
+    const projectedTotal = dayOfMonth > 0 ? (spent / dayOfMonth) * daysInMonth : spent;
+    const percentUsed = b.amount > 0 ? (spent / b.amount) * 100 : 0;
+    const percentProjected = b.amount > 0 ? (projectedTotal / b.amount) * 100 : 0;
+
+    let status: "on_track" | "warning" | "over_budget";
+    let advice: string;
+
+    if (percentProjected > 100 || percentUsed > 100) {
+      status = "over_budget";
+      advice = `You're projected to spend ₹${Math.round(projectedTotal).toLocaleString("en-IN")} against a ₹${b.amount.toLocaleString("en-IN")} budget. Consider cutting back on ${b.category}.`;
+    } else if (percentProjected > 80) {
+      status = "warning";
+      advice = `You're on pace to use ${Math.round(percentProjected)}% of your ${b.category} budget. Monitor spending closely.`;
+    } else {
+      status = "on_track";
+      advice = `Your ${b.category} spending is well within budget. Keep it up!`;
+    }
+
+    return {
+      category: b.category,
+      budget_amount: b.amount,
+      spent_so_far: Math.round(spent * 100) / 100,
+      projected_total: Math.round(projectedTotal * 100) / 100,
+      percent_used: Math.round(percentUsed * 100) / 100,
+      percent_projected: Math.round(percentProjected * 100) / 100,
+      status,
+      advice,
+    };
+  });
+
+  const totalBudget = budgets.reduce((s, b) => s + b.amount, 0);
+  const totalSpent = forecasts.reduce((s, f) => s + f.spent_so_far, 0);
+  const totalProjected = forecasts.reduce((s, f) => s + f.projected_total, 0);
+  const overCount = forecasts.filter((f) => f.status === "over_budget").length;
+
+  let overall_summary: string;
+  if (overCount > 0) {
+    overall_summary = `⚠️ You have ${overCount} categor${overCount === 1 ? "y" : "ies"} projected to exceed budget. Total spent so far: ₹${Math.round(totalSpent).toLocaleString("en-IN")} of ₹${totalBudget.toLocaleString("en-IN")} total budget with ${daysRemaining} days remaining.`;
+  } else if (totalProjected > totalBudget * 0.8) {
+    overall_summary = `You're approaching your overall budget limit. ₹${Math.round(totalSpent).toLocaleString("en-IN")} spent so far with ${daysRemaining} days left. Stay mindful of spending.`;
+  } else {
+    overall_summary = `Looking good! You've spent ₹${Math.round(totalSpent).toLocaleString("en-IN")} of ₹${totalBudget.toLocaleString("en-IN")} budget with ${daysRemaining} days remaining. You're on track! 🎉`;
+  }
+
+  return { forecasts, overall_summary, days_remaining: daysRemaining, days_elapsed: dayOfMonth };
+}
+
 // ─── Main Server ─────────────────────────────────────────────────
 serve(async (req: Request) => {
   // Handle CORS preflight
@@ -514,11 +580,18 @@ serve(async (req: Request) => {
         );
       }
 
-      const forecast = await forecastBudgets(
-        transactions || [],
-        budgets,
-        apiKey
-      );
+      // Try Gemini AI first, fallback to local computation
+      let forecast: BudgetForecastResult;
+      try {
+        forecast = await forecastBudgets(
+          transactions || [],
+          budgets,
+          apiKey
+        );
+      } catch (geminiErr) {
+        console.warn("Gemini forecast failed, using local fallback:", geminiErr);
+        forecast = computeLocalForecast(transactions || [], budgets);
+      }
 
       return new Response(
         JSON.stringify({ success: true, forecast }),
