@@ -48,17 +48,64 @@ function getSupabaseClient(authHeader: string) {
   });
 }
 
+// ─── Gemini API call with retry for rate limits ─────────────────
+const GEMINI_MODEL = "gemini-2.0-flash";
+
+async function fetchGemini(
+  apiKey: string,
+  body: Record<string, unknown>,
+  maxRetries = 3
+): Promise<Response> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (response.ok) return response;
+
+    if (response.status === 429 && attempt < maxRetries) {
+      const delay = Math.pow(2, attempt + 1) * 1000;
+      console.warn(
+        `Gemini rate limited (429). Retry ${attempt + 1}/${maxRetries} after ${delay}ms`
+      );
+      await new Promise((r) => setTimeout(r, delay));
+      continue;
+    }
+
+    // Return the error response as-is (caller handles it)
+    return response;
+  }
+
+  // All retries exhausted
+  return new Response(
+    JSON.stringify({
+      error: {
+        code: 429,
+        message: "Gemini API quota exhausted after retries. Please try again later.",
+      },
+    }),
+    { status: 429, headers: { "Content-Type": "application/json" } }
+  );
+}
+
 async function getUserFromRequest(req: Request) {
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) {
     throw new Error("Missing Authorization header");
   }
+  // Extract the raw JWT from "Bearer <token>"
+  const token = authHeader.replace("Bearer ", "");
   const supabase = getSupabaseClient(authHeader);
   const {
     data: { user },
     error,
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser(token);
   if (error || !user) {
+    console.error("Auth error:", error?.message);
     throw new Error("Unauthorized");
   }
   return { user, supabase, authHeader };
@@ -93,32 +140,25 @@ Rules:
 - If you cannot read a field, use reasonable defaults: vendor="Unknown", total=0, date=today's date.
 - line_items can be empty array if individual items are not readable.`;
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
+  const response = await fetchGemini(apiKey, {
+    contents: [
+      {
+        parts: [
+          { text: prompt },
           {
-            parts: [
-              { text: prompt },
-              {
-                inline_data: {
-                  mime_type: mimeType,
-                  data: imageBase64,
-                },
-              },
-            ],
+            inline_data: {
+              mime_type: mimeType,
+              data: imageBase64,
+            },
           },
         ],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 2048,
-        },
-      }),
-    }
-  );
+      },
+    ],
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 2048,
+    },
+  });
 
   if (!response.ok) {
     const errText = await response.text();
@@ -229,25 +269,18 @@ Rules:
 - advice should be specific and actionable, 1-2 sentences max
 - overall_summary in friendly tone`;
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 4096,
-        },
-      }),
-    }
-  );
+  const response = await fetchGemini(apiKey, {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 4096,
+    },
+  });
 
   if (!response.ok) {
     const errText = await response.text();
     console.error("Gemini API error:", errText);
-    throw new Error(`Gemini API returned ${response.status}`);
+    throw new Error(`Gemini API returned ${response.status}: ${errText.substring(0, 300)}`);
   }
 
   const data = await response.json();
@@ -533,13 +566,23 @@ serve(async (req: Request) => {
       err instanceof Error ? err.message : "Internal server error";
     console.error("Edge function error:", err);
 
-    const status =
+    let status = 500;
+    if (
       message === "Unauthorized" ||
       message === "Missing Authorization header"
-        ? 401
-        : 500;
+    ) {
+      status = 401;
+    } else if (message.includes("429") || message.includes("quota")) {
+      status = 429;
+    }
 
-    return new Response(JSON.stringify({ error: message }), {
+    // Provide user-friendly message for quota errors
+    const userMessage =
+      status === 429
+        ? "AI quota exceeded. The free Gemini API limit has been reached. Please wait a few minutes and try again."
+        : message;
+
+    return new Response(JSON.stringify({ error: userMessage }), {
       status,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

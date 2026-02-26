@@ -56,6 +56,9 @@ export async function parseReceiptImage(file: File): Promise<ReceiptParseRespons
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({ error: 'Unknown error' }))
+    if (response.status === 429) {
+      throw new Error('AI quota exceeded. Please wait a few minutes and try again.')
+    }
     throw new Error(errData.error || `Receipt parse failed with status ${response.status}`)
   }
 
@@ -108,6 +111,9 @@ export async function fetchBudgetForecast(): Promise<BudgetForecastResult> {
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({ error: 'Unknown error' }))
+    if (response.status === 429) {
+      throw new Error('AI quota exceeded. Please wait a few minutes and try again.')
+    }
     throw new Error(errData.error || `Forecast failed with status ${response.status}`)
   }
 
